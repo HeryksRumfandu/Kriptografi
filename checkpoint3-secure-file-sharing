@@ -1,42 +1,194 @@
-# Secure File Sharing - mekanisme kunci (inti saja). pip install cryptography
+"""
+Checkpoint 3 - Secure File Sharing (Alice -> Bob lewat Server tidak tepercaya)
+Kode demonstrasi mekanisme kunci. BUKAN implementasi produksi.
+
+Alur SRE : requirement -> threat -> security goal -> primitive
+Primitive: AES-256-GCM (file), X25519 ephemeral + HKDF-SHA256 (key wrap),
+           Ed25519 (tanda tangan manifest), SHA-256 (hash/fingerprint)
+
+Instal : pip install cryptography
+Jalankan: python secure_file_sharing.py
+"""
 import os
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+import json
+import hashlib
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey, Ed25519PublicKey)
+from cryptography.hazmat.primitives.asymmetric.x25519 import (
+    X25519PrivateKey, X25519PublicKey)
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.exceptions import InvalidSignature, InvalidTag
 
-def hkdf(secret, salt):  # HKDF-SHA256
-    return HKDF(hashes.SHA256(), 32, salt, b"fileshare-v1/keywrap").derive(secret)
+CHUNK = 64 * 1024  # ukuran blok file (64 KiB)
 
-def pub_bytes(k):
-    return k.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
-# ---------- ALICE ----------
+# ---------- util ----------
+def raw(pub) -> bytes:
+    return pub.public_bytes(serialization.Encoding.Raw,
+                            serialization.PublicFormat.Raw)
 
-def alice_send(file_data, IK_A_priv, EK_B_pub):
-    file_id, K_file = os.urandom(16), AESGCM.generate_key(256)
-    n1, n2 = os.urandom(12), os.urandom(12)
-    ciphertext = AESGCM(K_file).encrypt(n1, file_data, file_id)          # 1. AES-256-GCM
-    eph = X25519PrivateKey.generate()                                    # 2. X25519 ephemeral
-    K_wrap = hkdf(eph.exchange(EK_B_pub), file_id)                       #    + HKDF
-    wrapped = AESGCM(K_wrap).encrypt(n2, K_file, file_id)                #    bungkus K_file
-    manifest = file_id + pub_bytes(eph.public_key()) + n1 + n2 + wrapped
-    signature = IK_A_priv.sign(manifest)                                 # 3. Ed25519 sign
-    return manifest, signature, ciphertext                               # -> server
 
-# ---------- BOB ----------
+def fingerprint(pub) -> str:
+    """Fingerprint kunci publik, dibandingkan lewat kanal tepercaya (tatap muka)."""
+    return hashlib.sha256(raw(pub)).hexdigest()[:32]
 
-def bob_receive(manifest, signature, ciphertext, IK_A_pub, EK_B_priv):
-    IK_A_pub.verify(signature, manifest)                                 # 1. tolak jika palsu
-    file_id, eph_pub = manifest[:16], manifest[16:48]
-    n1, n2, wrapped = manifest[48:60], manifest[60:72], manifest[72:]
-    shared = EK_B_priv.exchange(X25519PublicKey.from_public_bytes(eph_pub))
-    K_file = AESGCM(hkdf(shared, file_id)).decrypt(n2, wrapped, file_id) # 2. buka K_file
-    return AESGCM(K_file).decrypt(n1, ciphertext, file_id)               # 3. dekripsi file
 
-# ---------- uji ----------
+def canon(*parts) -> bytes:
+    """Encoding kanonik: panjang-prefix, agar tidak ambigu."""
+    out = b""
+    for p in parts:
+        p = p if isinstance(p, bytes) else str(p).encode()
+        out += len(p).to_bytes(4, "big") + p
+    return out
+
+
+def kdf(secret: bytes, salt: bytes, info: bytes) -> bytes:
+    return HKDF(algorithm=hashes.SHA256(), length=32,
+                salt=salt, info=info).derive(secret)
+
+
+# ---------- 1. SENDER (Alice): enkripsi file + bungkus kunci ----------
+def alice_upload(plaintext: bytes, filename: str,
+                 IK_A_priv: Ed25519PrivateKey,
+                 EK_B_pub: X25519PublicKey):
+    """
+    EK_B_pub = kunci enkripsi publik Bob yang SUDAH diverifikasi fingerprint-nya.
+    Return: (manifest, signature, chunks) -> yang dikirim ke server.
+    """
+    file_id = os.urandom(16)
+    K_file = AESGCM.generate_key(bit_length=256)      # kunci acak per file
+
+    # (a) enkripsi file per blok; AAD mengikat file_id, indeks, dan penanda blok akhir
+    chunks, n = [], max(1, -(-len(plaintext) // CHUNK))
+    for i in range(n):
+        block = plaintext[i * CHUNK:(i + 1) * CHUNK]
+        nonce = i.to_bytes(12, "big")                  # unik per blok untuk K_file
+        aad = canon(file_id, i, int(i == n - 1))       # anti reorder & truncation
+        chunks.append(AESGCM(K_file).encrypt(nonce, block, aad))
+
+    # (b) bungkus K_file untuk Bob: ECIES-style (X25519 ephemeral + HKDF + AES-GCM)
+    EK_eph_priv = X25519PrivateKey.generate()
+    EK_eph_pub = raw(EK_eph_priv.public_key())
+    shared = EK_eph_priv.exchange(EK_B_pub)
+    K_wrap = kdf(shared, salt=file_id, info=b"fileshare-v1/keywrap")
+    wrap_nonce = os.urandom(12)
+    wrap_aad = canon(file_id, "Alice", "Bob")
+    wrapped_key = AESGCM(K_wrap).encrypt(wrap_nonce, K_file, wrap_aad)
+    del EK_eph_priv, K_file, K_wrap                    # hapus kunci sementara (forward secrecy)
+
+    # (c) manifest ditandatangani identitas Alice (autentikasi + integritas metadata)
+    manifest = {
+        "v": 1, "file_id": file_id.hex(), "sender": "Alice", "recipient": "Bob",
+        "filename": filename, "chunks": n, "size": len(plaintext),
+        "ct_hash": hashlib.sha256(b"".join(chunks)).hexdigest(),
+        "eph_pub": EK_eph_pub.hex(), "wrap_nonce": wrap_nonce.hex(),
+        "wrapped_key": wrapped_key.hex(),
+        "recipient_key_fp": fingerprint(EK_B_pub),     # terikat ke kunci Bob yang dituju
+    }
+    manifest_bytes = json.dumps(manifest, sort_keys=True).encode()
+    signature = IK_A_priv.sign(manifest_bytes)
+    return manifest_bytes, signature, chunks
+
+
+# ---------- 2. RECIPIENT (Bob): verifikasi lalu dekripsi ----------
+def bob_download(manifest_bytes: bytes, signature: bytes, chunks: list,
+                 IK_A_pub: Ed25519PublicKey,
+                 EK_B_priv: X25519PrivateKey,
+                 seen_file_ids: set) -> bytes:
+    # (a) VERIFIKASI tanda tangan dengan kunci identitas Alice yang tepercaya
+    try:
+        IK_A_pub.verify(signature, manifest_bytes)
+    except InvalidSignature:
+        raise ValueError("Manifest palsu/dimodifikasi: tanda tangan Alice gagal")
+    m = json.loads(manifest_bytes)
+
+    # (b) cek penerima, replay, dan hash ciphertext
+    if m["recipient"] != "Bob":
+        raise ValueError("Manifest bukan untuk Bob")
+    if m["recipient_key_fp"] != fingerprint(EK_B_priv.public_key()):
+        raise ValueError("Dibungkus untuk kunci lain (bukan kunci Bob)")
+    if m["file_id"] in seen_file_ids:
+        raise ValueError("Replay: file_id sudah pernah diterima")
+    if hashlib.sha256(b"".join(chunks)).hexdigest() != m["ct_hash"] \
+            or len(chunks) != m["chunks"]:
+        raise ValueError("Ciphertext diubah/dipotong oleh server")
+
+    # (c) unwrap K_file
+    file_id = bytes.fromhex(m["file_id"])
+    shared = EK_B_priv.exchange(
+        X25519PublicKey.from_public_bytes(bytes.fromhex(m["eph_pub"])))
+    K_wrap = kdf(shared, salt=file_id, info=b"fileshare-v1/keywrap")
+    K_file = AESGCM(K_wrap).decrypt(
+        bytes.fromhex(m["wrap_nonce"]), bytes.fromhex(m["wrapped_key"]),
+        canon(file_id, "Alice", "Bob"))
+
+    # (d) dekripsi per blok (tag GCM + AAD memeriksa urutan & blok akhir)
+    out, n = b"", m["chunks"]
+    for i, ct in enumerate(chunks):
+        out += AESGCM(K_file).decrypt(
+            i.to_bytes(12, "big"), ct, canon(file_id, i, int(i == n - 1)))
+    if len(out) != m["size"]:
+        raise ValueError("Ukuran file tidak cocok")
+    seen_file_ids.add(m["file_id"])
+    return out
+
+
+# ---------- 3. DEMO + skenario uji ----------
 if __name__ == "__main__":
-    IK_A, EK_B = Ed25519PrivateKey.generate(), X25519PrivateKey.generate()
-    m, s, c = alice_send(b"isi file rahasia", IK_A, EK_B.public_key())
-    print(bob_receive(m, s, c, IK_A.public_key(), EK_B))
+    # Setup: kunci jangka panjang; publiknya dipertukarkan & fingerprint
+    # dicocokkan lewat kanal tepercaya (tatap muka / telepon)
+    IK_A_priv = Ed25519PrivateKey.generate()
+    EK_B_priv = X25519PrivateKey.generate()
+    EK_B_pub = EK_B_priv.public_key()
+    print("Fingerprint IK_A :", fingerprint(IK_A_priv.public_key()))
+    print("Fingerprint EK_B :", fingerprint(EK_B_pub))
+
+    data = os.urandom(200_000)                          # file contoh
+    man, sig, cts = alice_upload(data, "laporan.pdf", IK_A_priv, EK_B_pub)
+    seen = set()
+
+    # Uji 1: normal
+    assert bob_download(man, sig, cts, IK_A_priv.public_key(), EK_B_priv, seen) == data
+    print("[OK]   Uji 1: file normal diterima Bob")
+
+    def expect_fail(name, fn):
+        try:
+            fn()
+            print(f"[GAGAL] {name}: seharusnya ditolak!")
+        except (ValueError, InvalidTag, InvalidSignature) as e:
+            print(f"[OK]   {name}: ditolak -> {type(e).__name__}")
+
+    # Uji 2: server mengubah isi ciphertext
+    bad = [cts[0][:-1] + bytes([cts[0][-1] ^ 1])] + cts[1:]
+    expect_fail("Uji 2 ciphertext diubah",
+                lambda: bob_download(man, sig, bad, IK_A_priv.public_key(), EK_B_priv, set()))
+
+    # Uji 3: server menukar urutan blok
+    swapped = [cts[1], cts[0]] + cts[2:]
+    expect_fail("Uji 3 blok ditukar",
+                lambda: bob_download(man, sig, swapped, IK_A_priv.public_key(), EK_B_priv, set()))
+
+    # Uji 4: server memotong blok terakhir
+    expect_fail("Uji 4 file dipotong",
+                lambda: bob_download(man, sig, cts[:-1], IK_A_priv.public_key(), EK_B_priv, set()))
+
+    # Uji 5: Eve mengganti manifest (misal wrapped_key milik Eve) tanpa kunci Alice
+    eve_sig_key = Ed25519PrivateKey.generate()
+    forged_sig = eve_sig_key.sign(man)
+    expect_fail("Uji 5 tanda tangan Eve",
+                lambda: bob_download(man, forged_sig, cts, IK_A_priv.public_key(), EK_B_priv, set()))
+
+    # Uji 6: replay file yang sama
+    expect_fail("Uji 6 replay",
+                lambda: bob_download(man, sig, cts, IK_A_priv.public_key(), EK_B_priv, seen))
+
+    # Uji 7: Eve menukar kunci publik Bob SEBELUM Alice upload (MITM pada distribusi kunci)
+    EK_E_priv = X25519PrivateKey.generate()
+    man2, sig2, cts2 = alice_upload(data, "laporan.pdf", IK_A_priv, EK_E_priv.public_key())
+    expect_fail("Uji 7 kunci Bob diganti Eve (fingerprint tidak diverifikasi -> Eve bisa baca; "
+                "Bob menolak karena fp tidak cocok)",
+                lambda: bob_download(man2, sig2, cts2, IK_A_priv.public_key(), EK_B_priv, set()))
+    print("[INFO] Uji 7: Bob menolak, TAPI Eve (pemilik EK_E) dapat mendekripsi. "
+          "Karena itu fingerprint EK_B WAJIB diverifikasi lewat kanal tepercaya.")
