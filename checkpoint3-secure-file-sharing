@@ -1,0 +1,40 @@
+# Secure File Sharing - mekanisme kunci (inti saja). pip install cryptography
+import os
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes, serialization
+
+def hkdf(secret, salt):  # HKDF-SHA256
+    return HKDF(hashes.SHA256(), 32, salt, b"fileshare-v1/keywrap").derive(secret)
+
+def pub_bytes(k):
+    return k.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+
+# ---------- ALICE ----------
+def alice_send(file_data, IK_A_priv, EK_B_pub):
+    file_id, K_file = os.urandom(16), AESGCM.generate_key(256)
+    n1, n2 = os.urandom(12), os.urandom(12)
+    ciphertext = AESGCM(K_file).encrypt(n1, file_data, file_id)          # 1. AES-256-GCM
+    eph = X25519PrivateKey.generate()                                    # 2. X25519 ephemeral
+    K_wrap = hkdf(eph.exchange(EK_B_pub), file_id)                       #    + HKDF
+    wrapped = AESGCM(K_wrap).encrypt(n2, K_file, file_id)                #    bungkus K_file
+    manifest = file_id + pub_bytes(eph.public_key()) + n1 + n2 + wrapped
+    signature = IK_A_priv.sign(manifest)                                 # 3. Ed25519 sign
+    return manifest, signature, ciphertext                               # -> server
+
+# ---------- BOB ----------
+def bob_receive(manifest, signature, ciphertext, IK_A_pub, EK_B_priv):
+    IK_A_pub.verify(signature, manifest)                                 # 1. tolak jika palsu
+    file_id, eph_pub = manifest[:16], manifest[16:48]
+    n1, n2, wrapped = manifest[48:60], manifest[60:72], manifest[72:]
+    shared = EK_B_priv.exchange(X25519PublicKey.from_public_bytes(eph_pub))
+    K_file = AESGCM(hkdf(shared, file_id)).decrypt(n2, wrapped, file_id) # 2. buka K_file
+    return AESGCM(K_file).decrypt(n1, ciphertext, file_id)               # 3. dekripsi file
+
+# ---------- uji ----------
+if __name__ == "__main__":
+    IK_A, EK_B = Ed25519PrivateKey.generate(), X25519PrivateKey.generate()
+    m, s, c = alice_send(b"isi file rahasia", IK_A, EK_B.public_key())
+    print(bob_receive(m, s, c, IK_A.public_key(), EK_B))
