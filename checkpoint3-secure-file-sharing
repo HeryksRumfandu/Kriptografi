@@ -13,6 +13,7 @@ def pub_bytes(k):
     return k.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
 # ---------- ALICE ----------
+
 def alice_send(file_data, IK_A_priv, EK_B_pub):
     file_id, K_file = os.urandom(16), AESGCM.generate_key(256)
     n1, n2 = os.urandom(12), os.urandom(12)
@@ -25,6 +26,7 @@ def alice_send(file_data, IK_A_priv, EK_B_pub):
     return manifest, signature, ciphertext                               # -> server
 
 # ---------- BOB ----------
+
 def bob_receive(manifest, signature, ciphertext, IK_A_pub, EK_B_priv):
     IK_A_pub.verify(signature, manifest)                                 # 1. tolak jika palsu
     file_id, eph_pub = manifest[:16], manifest[16:48]
