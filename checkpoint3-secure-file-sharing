@@ -1,5 +1,5 @@
 """
-Checkpoint 3 - Secure File Sharing (Alice -> Bob lewat Server tidak tepercaya)
+Checkpoint 3 - Secure File Sharing (Andi -> Budi lewat Server tidak tepercaya)
 Kode demonstrasi mekanisme kunci. BUKAN implementasi produksi.
 
 Alur SRE : requirement -> threat -> security goal -> primitive
@@ -49,12 +49,12 @@ def kdf(secret: bytes, salt: bytes, info: bytes) -> bytes:
                 salt=salt, info=info).derive(secret)
 
 
-# ---------- 1. SENDER (Alice): enkripsi file + bungkus kunci ----------
-def alice_upload(plaintext: bytes, filename: str,
+# ---------- 1. SENDER (Andi): enkripsi file + bungkus kunci ----------
+def andi_upload(plaintext: bytes, filename: str,
                  IK_A_priv: Ed25519PrivateKey,
                  EK_B_pub: X25519PublicKey):
     """
-    EK_B_pub = kunci enkripsi publik Bob yang SUDAH diverifikasi fingerprint-nya.
+    EK_B_pub = kunci enkripsi publik Budi yang SUDAH diverifikasi fingerprint-nya.
     Return: (manifest, signature, chunks) -> yang dikirim ke server.
     """
     file_id = os.urandom(16)
@@ -68,47 +68,47 @@ def alice_upload(plaintext: bytes, filename: str,
         aad = canon(file_id, i, int(i == n - 1))       # anti reorder & truncation
         chunks.append(AESGCM(K_file).encrypt(nonce, block, aad))
 
-    # (b) bungkus K_file untuk Bob: ECIES-style (X25519 ephemeral + HKDF + AES-GCM)
+    # (b) bungkus K_file untuk Budi: ECIES-style (X25519 ephemeral + HKDF + AES-GCM)
     EK_eph_priv = X25519PrivateKey.generate()
     EK_eph_pub = raw(EK_eph_priv.public_key())
     shared = EK_eph_priv.exchange(EK_B_pub)
     K_wrap = kdf(shared, salt=file_id, info=b"fileshare-v1/keywrap")
     wrap_nonce = os.urandom(12)
-    wrap_aad = canon(file_id, "Alice", "Bob")
+    wrap_aad = canon(file_id, "Andi", "Budi")
     wrapped_key = AESGCM(K_wrap).encrypt(wrap_nonce, K_file, wrap_aad)
     del EK_eph_priv, K_file, K_wrap                    # hapus kunci sementara (forward secrecy)
 
-    # (c) manifest ditandatangani identitas Alice (autentikasi + integritas metadata)
+    # (c) manifest ditandatangani identitas Andi (autentikasi + integritas metadata)
     manifest = {
-        "v": 1, "file_id": file_id.hex(), "sender": "Alice", "recipient": "Bob",
+        "v": 1, "file_id": file_id.hex(), "sender": "Andi", "recipient": "Budi",
         "filename": filename, "chunks": n, "size": len(plaintext),
         "ct_hash": hashlib.sha256(b"".join(chunks)).hexdigest(),
         "eph_pub": EK_eph_pub.hex(), "wrap_nonce": wrap_nonce.hex(),
         "wrapped_key": wrapped_key.hex(),
-        "recipient_key_fp": fingerprint(EK_B_pub),     # terikat ke kunci Bob yang dituju
+        "recipient_key_fp": fingerprint(EK_B_pub),     # terikat ke kunci Budi yang dituju
     }
     manifest_bytes = json.dumps(manifest, sort_keys=True).encode()
     signature = IK_A_priv.sign(manifest_bytes)
     return manifest_bytes, signature, chunks
 
 
-# ---------- 2. RECIPIENT (Bob): verifikasi lalu dekripsi ----------
-def bob_download(manifest_bytes: bytes, signature: bytes, chunks: list,
+# ---------- 2. RECIPIENT (Budi): verifikasi lalu dekripsi ----------
+def budi_download(manifest_bytes: bytes, signature: bytes, chunks: list,
                  IK_A_pub: Ed25519PublicKey,
                  EK_B_priv: X25519PrivateKey,
                  seen_file_ids: set) -> bytes:
-    # (a) VERIFIKASI tanda tangan dengan kunci identitas Alice yang tepercaya
+    # (a) VERIFIKASI tanda tangan dengan kunci identitas Andi yang tepercaya
     try:
         IK_A_pub.verify(signature, manifest_bytes)
     except InvalidSignature:
-        raise ValueError("Manifest palsu/dimodifikasi: tanda tangan Alice gagal")
+        raise ValueError("Manifest palsu/dimodifikasi: tanda tangan Andi gagal")
     m = json.loads(manifest_bytes)
 
     # (b) cek penerima, replay, dan hash ciphertext
-    if m["recipient"] != "Bob":
-        raise ValueError("Manifest bukan untuk Bob")
+    if m["recipient"] != "Budi":
+        raise ValueError("Manifest bukan untuk Budi")
     if m["recipient_key_fp"] != fingerprint(EK_B_priv.public_key()):
-        raise ValueError("Dibungkus untuk kunci lain (bukan kunci Bob)")
+        raise ValueError("Dibungkus untuk kunci lain (bukan kunci Budi)")
     if m["file_id"] in seen_file_ids:
         raise ValueError("Replay: file_id sudah pernah diterima")
     if hashlib.sha256(b"".join(chunks)).hexdigest() != m["ct_hash"] \
@@ -122,7 +122,7 @@ def bob_download(manifest_bytes: bytes, signature: bytes, chunks: list,
     K_wrap = kdf(shared, salt=file_id, info=b"fileshare-v1/keywrap")
     K_file = AESGCM(K_wrap).decrypt(
         bytes.fromhex(m["wrap_nonce"]), bytes.fromhex(m["wrapped_key"]),
-        canon(file_id, "Alice", "Bob"))
+        canon(file_id, "Andi", "Budi"))
 
     # (d) dekripsi per blok (tag GCM + AAD memeriksa urutan & blok akhir)
     out, n = b"", m["chunks"]
@@ -146,12 +146,12 @@ if __name__ == "__main__":
     print("Fingerprint EK_B :", fingerprint(EK_B_pub))
 
     data = os.urandom(200_000)                          # file contoh
-    man, sig, cts = alice_upload(data, "laporan.pdf", IK_A_priv, EK_B_pub)
+    man, sig, cts = andi_upload(data, "laporan.pdf", IK_A_priv, EK_B_pub)
     seen = set()
 
     # Uji 1: normal
-    assert bob_download(man, sig, cts, IK_A_priv.public_key(), EK_B_priv, seen) == data
-    print("[OK]   Uji 1: file normal diterima Bob")
+    assert budi_download(man, sig, cts, IK_A_priv.public_key(), EK_B_priv, seen) == data
+    print("[OK]   Uji 1: file normal diterima Budi")
 
     def expect_fail(name, fn):
         try:
@@ -163,32 +163,32 @@ if __name__ == "__main__":
     # Uji 2: server mengubah isi ciphertext
     bad = [cts[0][:-1] + bytes([cts[0][-1] ^ 1])] + cts[1:]
     expect_fail("Uji 2 ciphertext diubah",
-                lambda: bob_download(man, sig, bad, IK_A_priv.public_key(), EK_B_priv, set()))
+                lambda: budi_download(man, sig, bad, IK_A_priv.public_key(), EK_B_priv, set()))
 
     # Uji 3: server menukar urutan blok
     swapped = [cts[1], cts[0]] + cts[2:]
     expect_fail("Uji 3 blok ditukar",
-                lambda: bob_download(man, sig, swapped, IK_A_priv.public_key(), EK_B_priv, set()))
+                lambda: budi_download(man, sig, swapped, IK_A_priv.public_key(), EK_B_priv, set()))
 
     # Uji 4: server memotong blok terakhir
     expect_fail("Uji 4 file dipotong",
-                lambda: bob_download(man, sig, cts[:-1], IK_A_priv.public_key(), EK_B_priv, set()))
+                lambda: budi_download(man, sig, cts[:-1], IK_A_priv.public_key(), EK_B_priv, set()))
 
-    # Uji 5: Eve mengganti manifest (misal wrapped_key milik Eve) tanpa kunci Alice
+    # Uji 5: Eve mengganti manifest (misal wrapped_key milik Eve) tanpa kunci Andi
     eve_sig_key = Ed25519PrivateKey.generate()
     forged_sig = eve_sig_key.sign(man)
     expect_fail("Uji 5 tanda tangan Eve",
-                lambda: bob_download(man, forged_sig, cts, IK_A_priv.public_key(), EK_B_priv, set()))
+                lambda: budi_download(man, forged_sig, cts, IK_A_priv.public_key(), EK_B_priv, set()))
 
     # Uji 6: replay file yang sama
     expect_fail("Uji 6 replay",
-                lambda: bob_download(man, sig, cts, IK_A_priv.public_key(), EK_B_priv, seen))
+                lambda: budi_download(man, sig, cts, IK_A_priv.public_key(), EK_B_priv, seen))
 
-    # Uji 7: Eve menukar kunci publik Bob SEBELUM Alice upload (MITM pada distribusi kunci)
+    # Uji 7: Eve menukar kunci publik Budi SEBELUM Andi upload (MITM pada distribusi kunci)
     EK_E_priv = X25519PrivateKey.generate()
-    man2, sig2, cts2 = alice_upload(data, "laporan.pdf", IK_A_priv, EK_E_priv.public_key())
-    expect_fail("Uji 7 kunci Bob diganti Eve (fingerprint tidak diverifikasi -> Eve bisa baca; "
-                "Bob menolak karena fp tidak cocok)",
-                lambda: bob_download(man2, sig2, cts2, IK_A_priv.public_key(), EK_B_priv, set()))
-    print("[INFO] Uji 7: Bob menolak, TAPI Eve (pemilik EK_E) dapat mendekripsi. "
+    man2, sig2, cts2 = andi_upload(data, "laporan.pdf", IK_A_priv, EK_E_priv.public_key())
+    expect_fail("Uji 7 kunci Budi diganti Eve (fingerprint tidak diverifikasi -> Eve bisa baca; "
+                "Budi menolak karena fp tidak cocok)",
+                lambda: budi_download(man2, sig2, cts2, IK_A_priv.public_key(), EK_B_priv, set()))
+    print("[INFO] Uji 7: Budi menolak, TAPI Eve (pemilik EK_E) dapat mendekripsi. "
           "Karena itu fingerprint EK_B WAJIB diverifikasi lewat kanal tepercaya.")
