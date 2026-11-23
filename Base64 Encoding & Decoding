@@ -1,0 +1,16 @@
+# minggu1_base64.py
+
+import base64
+
+password = "Password123"
+
+# Encoding
+encoded = base64.b64encode(password.encode())
+
+# Decoding
+decoded = base64.b64decode(encoded).decode()
+
+print("=== BASE64 DEMO ===")
+print("Plaintext :", password)
+print("Encoded   :", encoded.decode())
+print("Decoded   :", decoded)
