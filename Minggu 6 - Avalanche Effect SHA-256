@@ -1,0 +1,31 @@
+# avalanche_demo.py
+
+import hashlib
+
+
+def count_different_bits(hash1, hash2):
+    b1 = bin(int(hash1, 16))[2:].zfill(256)
+    b2 = bin(int(hash2, 16))[2:].zfill(256)
+
+    return sum(bit1 != bit2 for bit1, bit2 in zip(b1, b2))
+
+
+text1 = b"hello"
+text2 = b"hfllo"
+
+hash1 = hashlib.sha256(text1).hexdigest()
+hash2 = hashlib.sha256(text2).hexdigest()
+
+different_bits = count_different_bits(hash1, hash2)
+
+percentage = (different_bits / 256) * 100
+
+print("=== Avalanche Effect ===")
+print("Input 1:", text1.decode())
+print("Input 2:", text2.decode())
+
+print("\nSHA256 #1:", hash1)
+print("SHA256 #2:", hash2)
+
+print(f"\nBit berbeda : {different_bits} dari 256")
+print(f"Persentase  : {percentage:.2f}%")
