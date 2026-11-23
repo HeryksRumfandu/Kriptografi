@@ -1,0 +1,35 @@
+# ecb_leakage_demo.py
+
+def toy_block_encrypt(block):
+    """
+    Simulasi block cipher sederhana.
+    Hanya untuk demonstrasi konsep ECB.
+    """
+    return block[::-1] + "|X"
+
+
+def ecb_encrypt_demo(message, block_size=4):
+    blocks = [
+        message[i:i + block_size]
+        for i in range(0, len(message), block_size)
+    ]
+
+    ciphertext_blocks = [
+        toy_block_encrypt(block)
+        for block in blocks
+    ]
+
+    return blocks, ciphertext_blocks
+
+
+message = "AAAAAAAAABBBBBBBBAAAAAAAABBBBBBBB"
+
+plaintext_blocks, ciphertext_blocks = ecb_encrypt_demo(message)
+
+print("=== Plaintext Blocks ===")
+for i, block in enumerate(plaintext_blocks, 1):
+    print(f"Block {i}: {block}")
+
+print("\n=== Ciphertext Blocks ===")
+for i, block in enumerate(ciphertext_blocks, 1):
+    print(f"Block {i}: {block}")
