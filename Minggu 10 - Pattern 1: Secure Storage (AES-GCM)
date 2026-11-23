@@ -1,0 +1,27 @@
+# secure_storage.py
+
+import os
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+data = b"Dokumen Skripsi Mahasiswa"
+
+dek = AESGCM.generate_key(bit_length=256)
+
+aes = AESGCM(dek)
+
+nonce = os.urandom(12)
+
+ciphertext = aes.encrypt(
+    nonce,
+    data,
+    None
+)
+
+plaintext = aes.decrypt(
+    nonce,
+    ciphertext,
+    None
+)
+
+print("Encrypted :", ciphertext.hex())
+print("Recovered :", plaintext.decode())
