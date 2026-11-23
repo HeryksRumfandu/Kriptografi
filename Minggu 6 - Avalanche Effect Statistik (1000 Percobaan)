@@ -1,0 +1,44 @@
+# avalanche_statistic.py
+
+import hashlib
+import random
+import statistics
+
+
+def flip_one_bit(data):
+    data = bytearray(data)
+
+    byte_index = random.randint(0, len(data) - 1)
+    bit_index = random.randint(0, 7)
+
+    data[byte_index] ^= (1 << bit_index)
+
+    return bytes(data)
+
+
+def different_bits(h1, h2):
+    b1 = bin(int(h1, 16))[2:].zfill(256)
+    b2 = bin(int(h2, 16))[2:].zfill(256)
+
+    return sum(x != y for x, y in zip(b1, b2))
+
+
+results = []
+
+for _ in range(1000):
+    msg = random.randbytes(32)
+
+    modified = flip_one_bit(msg)
+
+    hash1 = hashlib.sha256(msg).hexdigest()
+    hash2 = hashlib.sha256(modified).hexdigest()
+
+    diff = different_bits(hash1, hash2)
+
+    results.append((diff / 256) * 100)
+
+print("=== Statistik Avalanche SHA-256 ===")
+print(f"Rata-rata : {statistics.mean(results):.2f}%")
+print(f"Maksimum  : {max(results):.2f}%")
+print(f"Minimum   : {min(results):.2f}%")
+print(f"Std Dev   : {statistics.stdev(results):.2f}%")
