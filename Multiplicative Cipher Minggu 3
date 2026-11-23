@@ -1,0 +1,51 @@
+# minggu3_multiplicative_cipher.py
+
+from math import gcd
+
+
+def encrypt(text, key):
+    if gcd(key, 26) != 1:
+        raise ValueError("Key harus relatif prima terhadap 26")
+
+    result = ""
+
+    for char in text.upper():
+        if char.isalpha():
+            x = ord(char) - ord('A')
+            c = (key * x) % 26
+            result += chr(c + ord('A'))
+        else:
+            result += char
+
+    return result
+
+
+def decrypt(ciphertext, key):
+    if gcd(key, 26) != 1:
+        raise ValueError("Key harus relatif prima terhadap 26")
+
+    inverse_key = pow(key, -1, 26)
+
+    result = ""
+
+    for char in ciphertext.upper():
+        if char.isalpha():
+            y = ord(char) - ord('A')
+            p = (inverse_key * y) % 26
+            result += chr(p + ord('A'))
+        else:
+            result += char
+
+    return result
+
+
+plaintext = "KRIPTOGRAFI"
+key = 7
+
+ciphertext = encrypt(plaintext, key)
+decrypted = decrypt(ciphertext, key)
+
+print("=== MULTIPLICATIVE CIPHER ===")
+print("Plaintext  :", plaintext)
+print("Ciphertext :", ciphertext)
+print("Decrypted  :", decrypted)
