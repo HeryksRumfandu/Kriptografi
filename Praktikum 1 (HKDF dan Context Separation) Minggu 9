@@ -1,0 +1,48 @@
+# minggu9_hkdf.py
+
+import os
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+# Membuat master secret acak 32 byte
+master_secret = os.urandom(32)
+
+# Salt tetap untuk demonstrasi
+salt = b"praktikum-kriptografi"
+
+def derive_key(info_label):
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        info=info_label
+    )
+
+    return hkdf.derive(master_secret)
+
+# Derivasi kunci untuk aplikasi chat
+chat_key = derive_key(b"chat")
+
+# Derivasi kunci untuk aplikasi payment
+payment_key = derive_key(b"payment")
+
+# Derivasi ulang untuk membuktikan deterministik
+chat_key_again = derive_key(b"chat")
+
+print("=== HKDF Context Separation Demo ===\n")
+
+print("Master Secret:")
+print(master_secret.hex())
+
+print("\nChat Key:")
+print(chat_key.hex())
+
+print("\nPayment Key:")
+print(payment_key.hex())
+
+print("\nChat Key Again:")
+print(chat_key_again.hex())
+
+print("\n=== Verifikasi ===")
+print("Chat == Payment ? ", chat_key == payment_key)
+print("Chat == Chat Again ? ", chat_key == chat_key_again)
