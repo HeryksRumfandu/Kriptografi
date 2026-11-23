@@ -1,0 +1,19 @@
+# hash_not_encryption.py
+
+import hashlib
+
+secret_value = 85
+
+hash_value = hashlib.sha256(
+    str(secret_value).encode()
+).hexdigest()
+
+for guess in range(101):
+
+    check = hashlib.sha256(
+        str(guess).encode()
+    ).hexdigest()
+
+    if check == hash_value:
+        print("Nilai ditemukan :", guess)
+        break
