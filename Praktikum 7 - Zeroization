@@ -1,0 +1,18 @@
+# praktikum7_zeroization.py
+
+secret = bytearray(b"supersecretkey123")
+
+print("Before :", secret)
+
+for i in range(len(secret)):
+    secret[i] = 0
+
+print("After  :", secret)
+
+data = b"TOP_SECRET"
+
+alias = data
+
+del data
+
+print("Alias masih ada :", alias)
