@@ -1,0 +1,79 @@
+"""
+Affine Cipher Implementation
+Praktikum Kriptografi - Minggu 2
+Universitas Atma Jaya Yogyakarta
+
+Author: Heryks Herzel Theodore MK Rumfandu
+"""
+
+from math import gcd
+
+
+def affine_encrypt(plaintext, a, b):
+    """
+    Enkripsi menggunakan Affine Cipher
+    C = (aP + b) mod 26
+    """
+
+    if gcd(a, 26) != 1:
+        raise ValueError(
+            "Kunci 'a' tidak valid. Harus relatif prima terhadap 26."
+        )
+
+    ciphertext = ""
+
+    for ch in plaintext.upper():
+        if ch.isalpha():
+            p = ord(ch) - ord('A')
+            c = (a * p + b) % 26
+            ciphertext += chr(c + ord('A'))
+        else:
+            ciphertext += ch
+
+    return ciphertext
+
+
+def affine_decrypt(ciphertext, a, b):
+    """
+    Dekripsi menggunakan Affine Cipher
+    P = a⁻¹(C - b) mod 26
+    """
+
+    if gcd(a, 26) != 1:
+        raise ValueError(
+            "Kunci 'a' tidak valid. Harus relatif prima terhadap 26."
+        )
+
+    a_inverse = pow(a, -1, 26)
+
+    plaintext = ""
+
+    for ch in ciphertext.upper():
+        if ch.isalpha():
+            c = ord(ch) - ord('A')
+            p = (a_inverse * (c - b)) % 26
+            plaintext += chr(p + ord('A'))
+        else:
+            plaintext += ch
+
+    return plaintext
+
+
+def main():
+    print("=== AFFINE CIPHER DEMO ===")
+
+    plaintext = "HELLO MAHASISWA"
+
+    a = 5
+    b = 8
+
+    ciphertext = affine_encrypt(plaintext, a, b)
+    decrypted = affine_decrypt(ciphertext, a, b)
+
+    print(f"Plaintext  : {plaintext}")
+    print(f"Ciphertext : {ciphertext}")
+    print(f"Decrypted  : {decrypted}")
+
+
+if __name__ == "__main__":
+    main()
